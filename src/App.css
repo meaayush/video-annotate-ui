@@ -1,3 +1,28 @@
+/* ── Top Navigation ── */
+.top-nav {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 52px;
+  background: #1d2951;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.top-nav-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #ffffff;
+  letter-spacing: 0.02em;
+}
+
+.app-body {
+  min-height: calc(100vh - 52px);
+}
+
+/* ── Page ── */
 .page {
   max-width: 1120px;
   margin: 0 auto;

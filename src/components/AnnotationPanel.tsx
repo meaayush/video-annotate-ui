@@ -1,9 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Plus, Clock, Pencil, Trash2, Check, X, Layers, MessageSquare, ChevronDown } from 'lucide-react';
-import type { Annotation } from '../types/video';
-import type { AutoAnnotationItem, AutoAnnotationsPaginated } from '../api/videos';
-import { fetchAutoAnnotations, saveAutoAnnotation, updateAutoAnnotationInterval } from '../api/videos';
-import { addAnnotation, updateAnnotationNote, deleteAnnotation, fetchAnnotations } from '../data/mockAnnotations';
+import type { AutoAnnotationItem, AutoAnnotationsPaginated, ManualAnnotationItem } from '../api/videos';
+import {
+  fetchAutoAnnotations,
+  createAutoAnnotation,
+  patchAnnotation,
+  deleteAnnotationById,
+  updateAutoAnnotationInterval,
+  fetchManualAnnotations,
+  createManualAnnotation,
+} from '../api/videos';
 import { formatDuration } from '../utils/format';
 
 type Tab = 'auto' | 'manual';
@@ -14,14 +20,14 @@ interface AnnotationPanelProps {
   duration: number;
   onSeek: (time: number) => void;
   /** Called after manual annotations change (add/delete) so parent can sync timeline markers */
-  onMarkersChange?: (manualAnnotations: Annotation[]) => void;
+  onMarkersChange?: (manualAnnotations: ManualAnnotationItem[]) => void;
 }
 
 export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMarkersChange }: AnnotationPanelProps) {
   const [tab, setTab] = useState<Tab>('manual');
 
   // ── Manual annotations (Notes tab) ──
-  const [manualAnnotations, setManualAnnotations] = useState<Annotation[]>([]);
+  const [manualAnnotations, setManualAnnotations] = useState<ManualAnnotationItem[]>([]);
   const [manualLoading, setManualLoading] = useState(true);
 
   // ── Auto annotations (Auto Frames tab) ──
@@ -47,12 +53,12 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
   // Fetch manual annotations on mount
   useEffect(() => {
     setManualLoading(true);
-    fetchAnnotations(videoId).then((result) => {
-      const manual = result.annotations.filter((a) => a.type === 'manual');
-      setManualAnnotations(manual);
-      onMarkersChange?.(manual);
-      setManualLoading(false);
-    });
+    fetchManualAnnotations(videoId)
+      .then((items) => {
+        setManualAnnotations(items);
+        onMarkersChange?.(items);
+      })
+      .finally(() => setManualLoading(false));
   }, [videoId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load first page of auto-annotations when Auto Frames tab is opened
@@ -113,9 +119,9 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
 
   const handleAddNote = useCallback(async () => {
     if (!newNoteText.trim()) return;
-    const annotation = await addAnnotation(videoId, currentTime, newNoteText.trim());
+    const item = await createManualAnnotation(videoId, currentTime, newNoteText.trim());
     setManualAnnotations((prev) => {
-      const updated = [...prev, annotation].sort((a, b) => a.timestamp - b.timestamp);
+      const updated = [...prev, item].sort((a, b) => a.timestamp - b.timestamp);
       onMarkersChange?.(updated);
       return updated;
     });
@@ -125,26 +131,26 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
 
   const handleUpdateNote = useCallback(
     async (annotationId: string) => {
-      await updateAnnotationNote(annotationId, editText.trim());
+      const res = await patchAnnotation(videoId, annotationId, editText.trim());
       setManualAnnotations((prev) =>
-        prev.map((a) => (a.id === annotationId ? { ...a, note: editText.trim() } : a)),
+        prev.map((a) => (a.id === annotationId ? { ...a, content: res.content } : a)),
       );
       setEditingId(null);
       setEditText('');
     },
-    [editText],
+    [videoId, editText],
   );
 
   const handleDelete = useCallback(
     async (annotationId: string) => {
-      await deleteAnnotation(annotationId);
+      await deleteAnnotationById(videoId, annotationId);
       setManualAnnotations((prev) => {
         const updated = prev.filter((a) => a.id !== annotationId);
         onMarkersChange?.(updated);
         return updated;
       });
     },
-    [onMarkersChange],
+    [videoId, onMarkersChange],
   );
 
   const startEdit = useCallback((id: string, note: string) => {
@@ -170,19 +176,31 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
       if (!item) return;
       setAutoSaving(true);
       try {
-        const res = await saveAutoAnnotation(videoId, {
-          timestamp: item.timestamp,
-          content: autoEditContent.trim(),
-          note: autoEditContent.trim(),
-        });
-        // Update the item in-place with the returned id and content
-        setAutoItems((prev) =>
-          prev.map((it, i) =>
-            i === index
-              ? { ...it, id: res.id, content: res.content, createdAt: res.created_at }
-              : it,
-          ),
-        );
+        if (item.id) {
+          // Existing annotation — PATCH
+          const res = await patchAnnotation(videoId, item.id, autoEditContent.trim());
+          setAutoItems((prev) =>
+            prev.map((it, i) =>
+              i === index
+                ? { ...it, content: res.content }
+                : it,
+            ),
+          );
+        } else {
+          // New annotation (id was null) — POST
+          const res = await createAutoAnnotation(videoId, {
+            timestamp: item.timestamp,
+            content: autoEditContent.trim(),
+            note: autoEditContent.trim(),
+          });
+          setAutoItems((prev) =>
+            prev.map((it, i) =>
+              i === index
+                ? { ...it, id: res.id, content: res.content, createdAt: res.created_at }
+                : it,
+            ),
+          );
+        }
         setAutoEditIndex(null);
         setAutoEditContent('');
       } finally {
@@ -194,13 +212,13 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
 
   // ── Row renderers ──
 
-  const renderManualRow = (annotation: Annotation) => {
+  const renderManualRow = (annotation: ManualAnnotationItem) => {
     const isActive = duration > 0 && Math.abs(currentTime - annotation.timestamp) < 1;
     const isEditing = editingId === annotation.id;
 
     return (
       <div
-        key={annotation.id ?? `m-${annotation.timestamp}`}
+        key={annotation.id}
         className={`annotation-row ${isActive ? 'annotation-row--active' : ''}`}
       >
         <button
@@ -213,19 +231,19 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
         </button>
 
         <div className="annotation-content">
-          {isEditing && annotation.id ? (
+          {isEditing ? (
             <div className="annotation-edit-row">
               <input
                 className="annotation-edit-input"
                 value={editText}
                 onChange={(e) => setEditText(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleUpdateNote(annotation.id!);
+                  if (e.key === 'Enter') handleUpdateNote(annotation.id);
                   if (e.key === 'Escape') setEditingId(null);
                 }}
                 autoFocus
               />
-              <button className="annotation-action-btn" onClick={() => handleUpdateNote(annotation.id!)} title="Save">
+              <button className="annotation-action-btn" onClick={() => handleUpdateNote(annotation.id)} title="Save">
                 <Check size={14} />
               </button>
               <button className="annotation-action-btn" onClick={() => setEditingId(null)} title="Cancel">
@@ -234,18 +252,14 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
             </div>
           ) : (
             <>
-              <span className="annotation-note">{annotation.note}</span>
+              <span className="annotation-note">{annotation.content}</span>
               <div className="annotation-actions">
-                {annotation.id && (
-                  <button className="annotation-action-btn" onClick={() => startEdit(annotation.id!, annotation.note)} title="Edit note">
-                    <Pencil size={13} />
-                  </button>
-                )}
-                {annotation.id && (
-                  <button className="annotation-action-btn annotation-action-btn--danger" onClick={() => handleDelete(annotation.id!)} title="Delete">
-                    <Trash2 size={13} />
-                  </button>
-                )}
+                <button className="annotation-action-btn" onClick={() => startEdit(annotation.id, annotation.content)} title="Edit note">
+                  <Pencil size={13} />
+                </button>
+                <button className="annotation-action-btn annotation-action-btn--danger" onClick={() => handleDelete(annotation.id)} title="Delete">
+                  <Trash2 size={13} />
+                </button>
               </div>
             </>
           )}

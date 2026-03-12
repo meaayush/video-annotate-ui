@@ -290,8 +290,8 @@ export async function updateAutoAnnotationInterval(
   );
 }
 
-/** POST /video/:id/auto-annotations */
-export async function saveAutoAnnotation(
+/** POST /video/:id/auto-annotations — create a NEW auto annotation (id was null) */
+export async function createAutoAnnotation(
   videoId: string,
   payload: SaveAutoAnnotationRequest,
 ): Promise<SaveAutoAnnotationResponse> {
@@ -302,4 +302,85 @@ export async function saveAutoAnnotation(
       body: JSON.stringify(payload),
     },
   );
+}
+
+// ── Shared Annotation Patch & Delete ──
+
+interface AnnotationRaw {
+  id: string;
+  type: string;
+  source: string;
+  frame_number: number | null;
+  timestamp: number;
+  content: string;
+  created_at: string;
+}
+
+/** PATCH /video/:id/annotations/:annotationId — update content (works for both manual & auto) */
+export async function patchAnnotation(
+  videoId: string,
+  annotationId: string,
+  content: string,
+): Promise<AnnotationRaw> {
+  return apiClient<AnnotationRaw>(
+    `/video/${videoId}/annotations/${annotationId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ content }),
+    },
+  );
+}
+
+/** DELETE /video/:id/annotations/:annotationId */
+export async function deleteAnnotationById(
+  videoId: string,
+  annotationId: string,
+): Promise<void> {
+  await apiClient<unknown>(
+    `/video/${videoId}/annotations/${annotationId}`,
+    { method: 'DELETE' },
+  );
+}
+
+// ── Manual Annotations ──
+
+export interface ManualAnnotationItem {
+  id: string;
+  timestamp: number;
+  content: string;
+  createdAt: string;
+}
+
+/** GET /video/:id/annotations */
+export async function fetchManualAnnotations(
+  videoId: string,
+): Promise<ManualAnnotationItem[]> {
+  const data = await apiClient<{ annotations: AnnotationRaw[] }>(`/video/${videoId}/annotations`);
+  return data.annotations.map((raw) => ({
+    id: raw.id,
+    timestamp: raw.timestamp,
+    content: raw.content,
+    createdAt: raw.created_at,
+  }));
+}
+
+/** POST /video/:id/annotations — create a manual annotation */
+export async function createManualAnnotation(
+  videoId: string,
+  timestamp: number,
+  content: string,
+): Promise<ManualAnnotationItem> {
+  const raw = await apiClient<AnnotationRaw>(
+    `/video/${videoId}/annotations`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ type: 'timestamp', timestamp, content }),
+    },
+  );
+  return {
+    id: raw.id,
+    timestamp: raw.timestamp,
+    content: raw.content,
+    createdAt: raw.created_at,
+  };
 }

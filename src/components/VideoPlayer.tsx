@@ -9,7 +9,13 @@ import {
   SkipForward,
 } from 'lucide-react';
 import { formatDuration } from '../utils/format';
-import type { Annotation } from '../types/video';
+
+/** Minimal shape needed to render timeline markers */
+export interface TimelineMarker {
+  id: string;
+  timestamp: number;
+  content: string;
+}
 
 export interface VideoPlayerHandle {
   seekTo: (time: number) => void;
@@ -20,7 +26,7 @@ export interface VideoPlayerHandle {
 interface VideoPlayerProps {
   src: string;
   /** Manual annotations to show as markers on the timeline */
-  markers?: Annotation[];
+  markers?: TimelineMarker[];
   /** Called on every time update with currentTime */
   onTimeUpdate?: (time: number) => void;
   /** Called when duration is known */
@@ -211,7 +217,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                 key={m.id}
                 className="timeline-marker"
                 style={{ left: `${(m.timestamp / duration) * 100}%` }}
-                title={m.note || `Note at ${formatDuration(m.timestamp)}`}
+                title={m.content || `Note at ${formatDuration(m.timestamp)}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   const v = videoRef.current;

@@ -2,11 +2,12 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Calendar, Clock } from 'lucide-react';
 import { fetchVideoDetail } from '../api/videos';
+import type { ManualAnnotationItem } from '../api/videos';
 import { VideoPlayer } from '../components/VideoPlayer';
 import type { VideoPlayerHandle } from '../components/VideoPlayer';
 import { AnnotationPanel } from '../components/AnnotationPanel';
 import { formatDate, formatDuration } from '../utils/format';
-import type { Video, Annotation } from '../types/video';
+import type { Video } from '../types/video';
 import '../App.css';
 
 export function VideoDetailPage() {
@@ -19,7 +20,7 @@ export function VideoDetailPage() {
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [manualMarkers, setManualMarkers] = useState<Annotation[]>([]);
+  const [manualMarkers, setManualMarkers] = useState<ManualAnnotationItem[]>([]);
 
   // Fetch video detail from backend
   useEffect(() => {
@@ -46,7 +47,7 @@ export function VideoDetailPage() {
     setDuration(dur);
   }, []);
 
-  const handleMarkersChange = useCallback((markers: Annotation[]) => {
+  const handleMarkersChange = useCallback((markers: ManualAnnotationItem[]) => {
     setManualMarkers(markers);
   }, []);
 
