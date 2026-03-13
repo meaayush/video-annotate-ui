@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Clock, Pencil, Trash2, Check, X, Layers, MessageSquare, ChevronDown } from 'lucide-react';
-import type { AutoAnnotationItem, AutoAnnotationsPaginated, ManualAnnotationItem } from '../api/videos';
+import { Plus, Clock, Pencil, Trash2, Check, X, Layers, MessageSquare, ChevronDown, Sparkles, Tag } from 'lucide-react';
+import type { AutoAnnotationItem, AutoAnnotationsPaginated, ManualAnnotationItem, VideoSummary } from '../api/videos';
 import {
   fetchAutoAnnotations,
   createAutoAnnotation,
@@ -9,10 +9,11 @@ import {
   updateAutoAnnotationInterval,
   fetchManualAnnotations,
   createManualAnnotation,
+  fetchVideoSummary,
 } from '../api/videos';
 import { formatDuration } from '../utils/format';
 
-type Tab = 'auto' | 'manual';
+type Tab = 'auto' | 'manual' | 'summary';
 
 interface AnnotationPanelProps {
   videoId: string;
@@ -37,6 +38,12 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
   const [autoTotal, setAutoTotal] = useState(0);
   const [autoInterval, setAutoInterval] = useState<number | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
+
+  // ── Summary tab ──
+  const [summary, setSummary] = useState<VideoSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryLoaded, setSummaryLoaded] = useState(false);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
 
   // ── Note editing state ──
   const [addingNote, setAddingNote] = useState(false);
@@ -65,6 +72,21 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
   useEffect(() => {
     if (tab === 'auto' && autoPage === 0) {
       loadAutoPage(1);
+    }
+  }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Lazy-load summary when Summary tab first opened
+  useEffect(() => {
+    if (tab === 'summary' && !summaryLoaded && !summaryLoading) {
+      setSummaryLoading(true);
+      setSummaryError(null);
+      fetchVideoSummary(videoId)
+        .then((data) => {
+          setSummary(data);
+          setSummaryLoaded(true);
+        })
+        .catch(() => setSummaryError('Could not load summary.'))
+        .finally(() => setSummaryLoading(false));
     }
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -372,6 +394,13 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
               <span className="annotation-tab-count">{autoTotal}</span>
             )}
           </button>
+          <button
+            className={`annotation-tab ${tab === 'summary' ? 'annotation-tab--active' : ''}`}
+            onClick={() => setTab('summary')}
+          >
+            <Sparkles size={14} />
+            Summary
+          </button>
         </div>
 
         {tab === 'manual' && (
@@ -458,6 +487,67 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
               No notes yet. Pause the video and click "Add Note" to annotate.
             </p>
           )
+        ) : tab === 'summary' ? (
+          summaryLoading ? (
+            <p className="annotation-empty">Loading summary…</p>
+          ) : summaryError ? (
+            <p className="annotation-empty">{summaryError}</p>
+          ) : summary ? (
+            <div className="summary-content">
+              {/* TL;DR */}
+              <div className="summary-section">
+                <h4 className="summary-section-heading">
+                  <Sparkles size={13} />
+                  TL;DR
+                </h4>
+                <p className="summary-tldr">{summary.tldr}</p>
+              </div>
+
+              {/* Highlights */}
+              {summary.highlights.length > 0 && (
+                <div className="summary-section">
+                  <h4 className="summary-section-heading">
+                    <Clock size={13} />
+                    Highlights
+                  </h4>
+                  <div className="summary-highlights">
+                    {summary.highlights.map((h, i) => (
+                      <div key={i} className="summary-highlight-card">
+                        <button
+                          className="summary-highlight-ts"
+                          onClick={() => onSeek(h.timestamp)}
+                          title={`Jump to ${h.timestamp_display}`}
+                        >
+                          {h.timestamp_display}
+                        </button>
+                        <div className="summary-highlight-body">
+                          <span className="summary-highlight-title">{h.title}</span>
+                          <span className="summary-highlight-short">{h.short}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Keywords */}
+              {summary.keywords.length > 0 && (
+                <div className="summary-section">
+                  <h4 className="summary-section-heading">
+                    <Tag size={13} />
+                    Keywords
+                  </h4>
+                  <div className="summary-keywords">
+                    {summary.keywords.map((kw, i) => (
+                      <span key={i} className="summary-keyword">{kw}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="annotation-empty">No summary available for this video.</p>
+          )
         ) : (
           <>
             {autoItems.length > 0
@@ -486,7 +576,7 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
       </div>
 
       {/* Footer */}
-      {tab === 'auto' && autoInterval && autoItems.length > 0 && (
+      {tab === 'auto' && autoInterval !== null && autoItems.length > 0 && (
         <div className="annotation-footer">
           Frames every {autoInterval}s · showing {autoItems.length} of {autoTotal}
         </div>

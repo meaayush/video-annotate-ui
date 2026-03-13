@@ -342,6 +342,26 @@ export async function deleteAnnotationById(
   );
 }
 
+// ── Video Summary ──
+
+export interface VideoHighlight {
+  title: string;
+  timestamp: number;
+  short: string;
+  timestamp_display: string;
+}
+
+export interface VideoSummary {
+  tldr: string;
+  highlights: VideoHighlight[];
+  keywords: string[];
+}
+
+/** GET /video/:id/summary */
+export async function fetchVideoSummary(videoId: string): Promise<VideoSummary> {
+  return apiClient<VideoSummary>(`/video/${videoId}/summary`);
+}
+
 // ── Manual Annotations ──
 
 export interface ManualAnnotationItem {
