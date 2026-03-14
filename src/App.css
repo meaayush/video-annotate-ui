@@ -873,7 +873,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-secondary);
 }
@@ -881,6 +883,15 @@
 .annotation-tabs {
   display: flex;
   gap: 4px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  min-width: 0;
+}
+
+.annotation-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .annotation-tab {
@@ -958,6 +969,8 @@
   display: flex;
   gap: 6px;
   align-items: center;
+  flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 /* ── Interval Selector ── */
