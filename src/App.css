@@ -829,6 +829,37 @@
   transform: translate(-50%, -50%) scale(1.4);
 }
 
+/* ── Timeline Frame Range Bars ── */
+.timeline-frame-range {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  background: rgba(249, 115, 22, 0.28);
+  border-left: 2px solid #f97316;
+  border-right: 2px solid #f97316;
+  border-radius: 2px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Dot marking the first click in range-select mode */
+.timeline-range-start {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 10px;
+  height: 10px;
+  background: rgba(249, 115, 22, 0.45);
+  border: 2px solid #f97316;
+  border-radius: 50%;
+  z-index: 3;
+  pointer-events: none;
+}
+
+.timeline--range-select {
+  cursor: crosshair;
+}
+
 /* ── Annotation Panel ── */
 .annotation-panel {
   margin-top: 24px;
@@ -910,6 +941,23 @@
 .annotation-add-btn:hover {
   border-color: var(--accent);
   color: var(--text-primary);
+}
+
+.annotation-add-btn--active {
+  border-color: #f97316;
+  color: #f97316;
+  background: #fff7ed;
+}
+
+.annotation-add-btn--active:hover {
+  border-color: #ea580c;
+  color: #ea580c;
+}
+
+.annotation-header-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 /* ── Interval Selector ── */
@@ -1120,6 +1168,49 @@
   background: #fffbeb;
 }
 
+.annotation-add-row--frame {
+  background: #fff7ed;
+}
+
+/* ── Range-select status banner ── */
+.range-select-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  background: #fff7ed;
+  border-bottom: 1px solid #fed7aa;
+  gap: 12px;
+}
+
+.range-select-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: #c2410c;
+}
+
+.range-select-banner-text svg {
+  flex-shrink: 0;
+  color: #f97316;
+}
+
+/* ── Frame annotation timestamp range ── */
+.annotation-frame-timestamps {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.annotation-frame-dash {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  line-height: 1;
+}
+
 /* ── Empty / Loading ── */
 .annotation-empty {
   padding: 32px 16px;
@@ -1163,6 +1254,50 @@
   font-size: 0.75rem;
   color: var(--text-muted);
   background: var(--bg-secondary);
+}
+
+/* ── Annotation Search Bar ── */
+.annotation-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-primary);
+}
+
+.annotation-search-icon {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.annotation-search-input {
+  flex: 1;
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+  min-width: 0;
+}
+
+.annotation-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.annotation-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  transition: color var(--transition);
+  flex-shrink: 0;
+}
+
+.annotation-search-clear:hover {
+  color: var(--text-primary);
 }
 
 /* ── Summary Tab ── */

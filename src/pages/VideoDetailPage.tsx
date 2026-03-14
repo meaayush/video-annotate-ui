@@ -1,10 +1,10 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ArrowLeft, Calendar, Clock } from 'lucide-react';
 import { fetchVideoDetail } from '../api/videos';
-import type { ManualAnnotationItem } from '../api/videos';
+import type { ManualAnnotationItem, TimestampAnnotationItem, FrameAnnotationItem } from '../api/videos';
 import { VideoPlayer } from '../components/VideoPlayer';
-import type { VideoPlayerHandle } from '../components/VideoPlayer';
+import type { VideoPlayerHandle, TimelineFrameRange } from '../components/VideoPlayer';
 import { AnnotationPanel } from '../components/AnnotationPanel';
 import { formatDate, formatDuration } from '../utils/format';
 import type { Video } from '../types/video';
@@ -21,6 +21,10 @@ export function VideoDetailPage() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [manualMarkers, setManualMarkers] = useState<ManualAnnotationItem[]>([]);
+
+  // Range-select state (shared between VideoPlayer and AnnotationPanel)
+  const [rangeSelectMode, setRangeSelectMode] = useState(false);
+  const [pendingRange, setPendingRange] = useState<{ start: number; end: number } | null>(null);
 
   // Fetch video detail from backend
   useEffect(() => {
@@ -50,6 +54,43 @@ export function VideoDetailPage() {
   const handleMarkersChange = useCallback((markers: ManualAnnotationItem[]) => {
     setManualMarkers(markers);
   }, []);
+
+  const handleStartRangeSelect = useCallback(() => {
+    setRangeSelectMode(true);
+    setPendingRange(null);
+  }, []);
+
+  const handleRangeSelected = useCallback((start: number, end: number) => {
+    setRangeSelectMode(false);
+    setPendingRange({ start, end });
+  }, []);
+
+  const handleCancelRangeSelect = useCallback(() => {
+    setRangeSelectMode(false);
+    setPendingRange(null);
+  }, []);
+
+  // Split manual markers into point markers and frame ranges for the player
+  const pointMarkers = useMemo(
+    () =>
+      manualMarkers
+        .filter((m): m is TimestampAnnotationItem => m.type === 'timestamp')
+        .map((m) => ({ id: m.id, timestamp: m.timestamp, content: m.content })),
+    [manualMarkers],
+  );
+
+  const frameRangesForPlayer = useMemo(
+    () =>
+      manualMarkers
+        .filter((m): m is FrameAnnotationItem => m.type === 'frame')
+        .map((m): TimelineFrameRange => ({
+          id: m.id,
+          timestampStart: m.timestampStart,
+          timestampEnd: m.timestampEnd,
+          content: m.content,
+        })),
+    [manualMarkers],
+  );
 
   if (loading) {
     return (
@@ -81,9 +122,12 @@ export function VideoDetailPage() {
         <VideoPlayer
           ref={playerRef}
           src={video.videoUrl}
-          markers={manualMarkers}
+          markers={pointMarkers}
+          frameRanges={frameRangesForPlayer}
           onTimeUpdate={handleTimeUpdate}
           onDurationChange={handleDurationChange}
+          rangeSelectMode={rangeSelectMode}
+          onRangeSelected={handleRangeSelected}
         />
       ) : (
         <div className="player-wrapper" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -125,6 +169,10 @@ export function VideoDetailPage() {
           duration={duration}
           onSeek={handleSeek}
           onMarkersChange={handleMarkersChange}
+          isRangeSelectMode={rangeSelectMode}
+          pendingRange={pendingRange}
+          onStartRangeSelect={handleStartRangeSelect}
+          onCancelRangeSelect={handleCancelRangeSelect}
         />
       )}
     </div>

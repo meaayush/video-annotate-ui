@@ -17,6 +17,14 @@ export interface TimelineMarker {
   content: string;
 }
 
+/** A frame (range) annotation to render as an orange bar on the timeline */
+export interface TimelineFrameRange {
+  id: string;
+  timestampStart: number;
+  timestampEnd: number;
+  content: string;
+}
+
 export interface VideoPlayerHandle {
   seekTo: (time: number) => void;
   getCurrentTime: () => number;
@@ -25,16 +33,22 @@ export interface VideoPlayerHandle {
 
 interface VideoPlayerProps {
   src: string;
-  /** Manual annotations to show as markers on the timeline */
+  /** Point (timestamp) markers to show as amber dots on the timeline */
   markers?: TimelineMarker[];
+  /** Frame (range) annotations to show as orange bars on the timeline */
+  frameRanges?: TimelineFrameRange[];
   /** Called on every time update with currentTime */
   onTimeUpdate?: (time: number) => void;
   /** Called when duration is known */
   onDurationChange?: (duration: number) => void;
+  /** When true, two clicks on the timeline define a range instead of seeking */
+  rangeSelectMode?: boolean;
+  /** Called with (start, end) after two clicks in range-select mode */
+  onRangeSelected?: (start: number, end: number) => void;
 }
 
 export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
-  function VideoPlayer({ src, markers = [], onTimeUpdate, onDurationChange }, ref) {
+  function VideoPlayer({ src, markers = [], frameRanges = [], onTimeUpdate, onDurationChange, rangeSelectMode = false, onRangeSelected }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const timelineRef = useRef<HTMLDivElement>(null);
 
@@ -45,6 +59,13 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
   const [seeking, setSeeking] = useState(false);
+  // Tracks the first click timestamp while in range-select mode
+  const [rangeFirstClick, setRangeFirstClick] = useState<number | null>(null);
+
+  // Reset first-click state whenever range-select mode is turned off
+  useEffect(() => {
+    if (!rangeSelectMode) setRangeFirstClick(null);
+  }, [rangeSelectMode]);
 
   // Expose seek/time methods to parent
   useImperativeHandle(ref, () => ({
@@ -128,18 +149,37 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
 
   const handleTimelineMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = timelineRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const clickTime = fraction * duration;
+
+      if (rangeSelectMode) {
+        // First click → record start; second click → emit range
+        if (rangeFirstClick === null) {
+          setRangeFirstClick(clickTime);
+        } else {
+          const start = Math.min(rangeFirstClick, clickTime);
+          const end = Math.max(rangeFirstClick, clickTime);
+          setRangeFirstClick(null);
+          onRangeSelected?.(start, end);
+        }
+        return;
+      }
+
+      if (!videoRef.current) return;
       setSeeking(true);
       handleTimelineClick(e);
 
       const onMouseMove = (ev: MouseEvent) => {
-        const rect = timelineRef.current?.getBoundingClientRect();
-        if (!rect || !videoRef.current) return;
-        const fraction = Math.max(
+        const r = timelineRef.current?.getBoundingClientRect();
+        if (!r || !videoRef.current) return;
+        const f = Math.max(
           0,
-          Math.min(1, (ev.clientX - rect.left) / rect.width),
+          Math.min(1, (ev.clientX - r.left) / r.width),
         );
-        videoRef.current.currentTime = fraction * duration;
-        setCurrentTime(fraction * duration);
+        videoRef.current.currentTime = f * duration;
+        setCurrentTime(f * duration);
       };
 
       const onMouseUp = () => {
@@ -151,7 +191,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       document.addEventListener('mousemove', onMouseMove);
       document.addEventListener('mouseup', onMouseUp);
     },
-    [duration, handleTimelineClick],
+    [duration, handleTimelineClick, rangeSelectMode, rangeFirstClick, onRangeSelected],
   );
 
   const handleVolumeChange = useCallback(
@@ -196,7 +236,7 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
       <div className="player-controls">
         {/* Timeline */}
         <div
-          className="timeline"
+          className={`timeline${rangeSelectMode ? ' timeline--range-select' : ''}`}
           ref={timelineRef}
           onMouseDown={handleTimelineMouseDown}
         >
@@ -210,7 +250,20 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
           >
             <div className="timeline-thumb" />
           </div>
-          {/* Manual annotation markers */}
+          {/* Frame range annotations — orange bars */}
+          {duration > 0 &&
+            frameRanges.map((fr) => (
+              <div
+                key={fr.id}
+                className="timeline-frame-range"
+                style={{
+                  left: `${(fr.timestampStart / duration) * 100}%`,
+                  width: `${Math.max(0.5, ((fr.timestampEnd - fr.timestampStart) / duration) * 100)}%`,
+                }}
+                title={fr.content || `${formatDuration(fr.timestampStart)} – ${formatDuration(fr.timestampEnd)}`}
+              />
+            ))}
+          {/* Manual annotation point markers */}
           {duration > 0 &&
             markers.map((m) => (
               <div
@@ -228,6 +281,13 @@ export const VideoPlayer = forwardRef<VideoPlayerHandle, VideoPlayerProps>(
                 }}
               />
             ))}
+          {/* Range-select first-click indicator */}
+          {rangeFirstClick !== null && duration > 0 && (
+            <div
+              className="timeline-range-start"
+              style={{ left: `${(rangeFirstClick / duration) * 100}%` }}
+            />
+          )}
         </div>
 
         {/* Controls Row */}

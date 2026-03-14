@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, Clock, Pencil, Trash2, Check, X, Layers, MessageSquare, ChevronDown, Sparkles, Tag } from 'lucide-react';
-import type { AutoAnnotationItem, AutoAnnotationsPaginated, ManualAnnotationItem, VideoSummary } from '../api/videos';
+import { Plus, Clock, Pencil, Trash2, Check, X, Layers, MessageSquare, ChevronDown, Sparkles, Tag, Film, Info, Search } from 'lucide-react';
+import type { AutoAnnotationItem, AutoAnnotationsPaginated, ManualAnnotationItem, FrameAnnotationItem, VideoSummary } from '../api/videos';
 import {
   fetchAutoAnnotations,
   createAutoAnnotation,
@@ -9,6 +9,7 @@ import {
   updateAutoAnnotationInterval,
   fetchManualAnnotations,
   createManualAnnotation,
+  createFrameAnnotation,
   fetchVideoSummary,
 } from '../api/videos';
 import { formatDuration } from '../utils/format';
@@ -20,11 +21,19 @@ interface AnnotationPanelProps {
   currentTime: number;
   duration: number;
   onSeek: (time: number) => void;
-  /** Called after manual annotations change (add/delete) so parent can sync timeline markers */
+  /** Called after manual annotations change so parent can sync timeline markers */
   onMarkersChange?: (manualAnnotations: ManualAnnotationItem[]) => void;
+  /** True while the player is waiting for two timeline clicks to define a range */
+  isRangeSelectMode?: boolean;
+  /** Set after the user has clicked twice on the timeline — ready to enter content */
+  pendingRange?: { start: number; end: number } | null;
+  /** Activate range-select mode on the player */
+  onStartRangeSelect?: () => void;
+  /** Cancel range-select mode and clear any pending range */
+  onCancelRangeSelect?: () => void;
 }
 
-export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMarkersChange }: AnnotationPanelProps) {
+export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMarkersChange, isRangeSelectMode = false, pendingRange, onStartRangeSelect, onCancelRangeSelect }: AnnotationPanelProps) {
   const [tab, setTab] = useState<Tab>('manual');
 
   // ── Manual annotations (Notes tab) ──
@@ -39,6 +48,12 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
   const [autoInterval, setAutoInterval] = useState<number | null>(null);
   const [autoLoading, setAutoLoading] = useState(false);
 
+  // ── Search state ──
+  const [manualSearch, setManualSearch] = useState('');
+  const [manualSearchResults, setManualSearchResults] = useState<ManualAnnotationItem[] | null>(null);
+  const [manualSearchLoading, setManualSearchLoading] = useState(false);
+  const [autoSearch, setAutoSearch] = useState('');
+
   // ── Summary tab ──
   const [summary, setSummary] = useState<VideoSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
@@ -51,6 +66,10 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState('');
   const noteInputRef = useRef<HTMLInputElement>(null);
+
+  // ── Frame annotation form state ──
+  const [frameContent, setFrameContent] = useState('');
+  const frameInputRef = useRef<HTMLInputElement>(null);
 
   // ── Auto-frame editing state ──
   const [autoEditIndex, setAutoEditIndex] = useState<number | null>(null);
@@ -67,6 +86,28 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
       })
       .finally(() => setManualLoading(false));
   }, [videoId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced manual search
+  useEffect(() => {
+    const trimmed = manualSearch.trim();
+    if (!trimmed) {
+      setManualSearchResults(null);
+      setManualSearchLoading(false);
+      return;
+    }
+    setManualSearchLoading(true);
+    const timer = setTimeout(async () => {
+      try {
+        const results = await fetchManualAnnotations(videoId, trimmed);
+        setManualSearchResults(results);
+      } catch {
+        setManualSearchResults(null);
+      } finally {
+        setManualSearchLoading(false);
+      }
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [manualSearch, videoId]);
 
   // Load first page of auto-annotations when Auto Frames tab is opened
   useEffect(() => {
@@ -91,10 +132,10 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
   }, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadAutoPage = useCallback(
-    async (page: number) => {
+    async (page: number, search?: string) => {
       setAutoLoading(true);
       try {
-        const res: AutoAnnotationsPaginated = await fetchAutoAnnotations(videoId, page, 50);
+        const res: AutoAnnotationsPaginated = await fetchAutoAnnotations(videoId, page, 50, search);
         setAutoItems((prev) => (page === 1 ? res.items : [...prev, ...res.items]));
         setAutoPage(res.page);
         setAutoTotalPages(res.totalPages);
@@ -107,6 +148,15 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
     [videoId],
   );
 
+  // Debounced auto-frame search — reloads from page 1 whenever the term changes
+  useEffect(() => {
+    if (autoPage === 0) return; // auto tab not yet opened
+    const timer = setTimeout(() => {
+      loadAutoPage(1, autoSearch.trim() || undefined);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [autoSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Handle interval change: call API then reload auto annotations from page 1
   const handleIntervalChange = useCallback(
     async (newInterval: number) => {
@@ -117,7 +167,7 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
         // Reset and reload from page 1
         setAutoItems([]);
         setAutoPage(0);
-        const res = await fetchAutoAnnotations(videoId, 1, 50);
+        const res = await fetchAutoAnnotations(videoId, 1, 50, autoSearch.trim() || undefined);
         setAutoItems(res.items);
         setAutoPage(res.page);
         setAutoTotalPages(res.totalPages);
@@ -127,7 +177,7 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
         setAutoLoading(false);
       }
     },
-    [videoId, autoInterval],
+    [videoId, autoInterval, autoSearch],
   );
 
   // Focus note input when adding
@@ -137,16 +187,29 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
     }
   }, [addingNote]);
 
+  // Focus frame content input when a range has been selected
+  useEffect(() => {
+    if (pendingRange && frameInputRef.current) {
+      frameInputRef.current.focus();
+    }
+  }, [pendingRange]);
+
   // ── Manual note handlers ──
 
   const handleAddNote = useCallback(async () => {
     if (!newNoteText.trim()) return;
     const item = await createManualAnnotation(videoId, currentTime, newNoteText.trim());
     setManualAnnotations((prev) => {
-      const updated = [...prev, item].sort((a, b) => a.timestamp - b.timestamp);
+      const updated = [...prev, item].sort((a, b) => {
+        const aTime = a.type === 'timestamp' ? a.timestamp : a.timestampStart;
+        const bTime = b.type === 'timestamp' ? b.timestamp : b.timestampStart;
+        return aTime - bTime;
+      });
       onMarkersChange?.(updated);
       return updated;
     });
+    setManualSearchResults(null);
+    setManualSearch('');
     setNewNoteText('');
     setAddingNote(false);
   }, [videoId, currentTime, newNoteText, onMarkersChange]);
@@ -157,6 +220,8 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
       setManualAnnotations((prev) =>
         prev.map((a) => (a.id === annotationId ? { ...a, content: res.content } : a)),
       );
+      setManualSearchResults(null);
+      setManualSearch('');
       setEditingId(null);
       setEditText('');
     },
@@ -171,9 +236,34 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
         onMarkersChange?.(updated);
         return updated;
       });
+      setManualSearchResults(null);
+      setManualSearch('');
     },
     [videoId, onMarkersChange],
   );
+
+  const handleSaveFrame = useCallback(async () => {
+    if (!frameContent.trim() || !pendingRange) return;
+    const item = await createFrameAnnotation(videoId, pendingRange.start, pendingRange.end, frameContent.trim());
+    setManualAnnotations((prev) => {
+      const updated = [...prev, item].sort((a, b) => {
+        const aTime = a.type === 'timestamp' ? a.timestamp : a.timestampStart;
+        const bTime = b.type === 'timestamp' ? b.timestamp : b.timestampStart;
+        return aTime - bTime;
+      });
+      onMarkersChange?.(updated);
+      return updated;
+    });
+    setManualSearchResults(null);
+    setManualSearch('');
+    setFrameContent('');
+    onCancelRangeSelect?.();
+  }, [videoId, frameContent, pendingRange, onMarkersChange, onCancelRangeSelect]);
+
+  const handleCancelFrame = useCallback(() => {
+    setFrameContent('');
+    onCancelRangeSelect?.();
+  }, [onCancelRangeSelect]);
 
   const startEdit = useCallback((id: string, note: string) => {
     setEditingId(id);
@@ -234,7 +324,80 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
 
   // ── Row renderers ──
 
+  const renderFrameRow = (annotation: FrameAnnotationItem) => {
+    const isActive =
+      duration > 0 &&
+      currentTime >= annotation.timestampStart &&
+      currentTime <= annotation.timestampEnd;
+    const isEditing = editingId === annotation.id;
+
+    return (
+      <div
+        key={annotation.id}
+        className={`annotation-row ${isActive ? 'annotation-row--active' : ''}`}
+      >
+        <div className="annotation-frame-timestamps">
+          <button
+            className="annotation-timestamp"
+            onClick={() => onSeek(annotation.timestampStart)}
+            title={`Jump to start: ${formatDuration(annotation.timestampStart)}`}
+          >
+            <Clock size={12} />
+            {formatDuration(annotation.timestampStart)}
+          </button>
+          <span className="annotation-frame-dash">–</span>
+          <button
+            className="annotation-timestamp"
+            onClick={() => onSeek(annotation.timestampEnd)}
+            title={`Jump to end: ${formatDuration(annotation.timestampEnd)}`}
+          >
+            <Clock size={12} />
+            {formatDuration(annotation.timestampEnd)}
+          </button>
+        </div>
+
+        <div className="annotation-content">
+          {isEditing ? (
+            <div className="annotation-edit-row">
+              <input
+                className="annotation-edit-input"
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleUpdateNote(annotation.id);
+                  if (e.key === 'Escape') setEditingId(null);
+                }}
+                autoFocus
+              />
+              <button className="annotation-action-btn" onClick={() => handleUpdateNote(annotation.id)} title="Save">
+                <Check size={14} />
+              </button>
+              <button className="annotation-action-btn" onClick={() => setEditingId(null)} title="Cancel">
+                <X size={14} />
+              </button>
+            </div>
+          ) : (
+            <>
+              <span className="annotation-note">{annotation.content}</span>
+              <div className="annotation-actions">
+                <button className="annotation-action-btn" onClick={() => startEdit(annotation.id, annotation.content)} title="Edit">
+                  <Pencil size={13} />
+                </button>
+                <button className="annotation-action-btn annotation-action-btn--danger" onClick={() => handleDelete(annotation.id)} title="Delete">
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderManualRow = (annotation: ManualAnnotationItem) => {
+    if (annotation.type === 'frame') return renderFrameRow(annotation);
+
+    // timestamp annotation
     const isActive = duration > 0 && Math.abs(currentTime - annotation.timestamp) < 1;
     const isEditing = editingId === annotation.id;
 
@@ -368,6 +531,7 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
   // ── Render ──
 
   const autoHasMore = autoPage < autoTotalPages;
+  const displayedManualAnnotations = manualSearchResults ?? manualAnnotations;
 
   return (
     <div className="annotation-panel">
@@ -404,14 +568,26 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
         </div>
 
         {tab === 'manual' && (
-          <button
-            className="annotation-add-btn"
-            onClick={() => setAddingNote(true)}
-            title="Add note at current time"
-          >
-            <Plus size={14} />
-            Add Note
-          </button>
+          <div className="annotation-header-actions">
+            <button
+              className="annotation-add-btn"
+              onClick={() => setAddingNote(true)}
+              title="Add note at current time"
+              disabled={isRangeSelectMode || !!pendingRange}
+            >
+              <Plus size={14} />
+              Add Note
+            </button>
+            <button
+              className={`annotation-add-btn${isRangeSelectMode || pendingRange ? ' annotation-add-btn--active' : ''}`}
+              onClick={onStartRangeSelect}
+              title="Click twice on the timeline to create a frame annotation"
+              disabled={isRangeSelectMode || !!pendingRange}
+            >
+              <Film size={14} />
+              Add Frame
+            </button>
+          </div>
         )}
 
         {tab === 'auto' && (
@@ -432,6 +608,52 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
           </div>
         )}
       </div>
+
+      {/* Search bar — Notes and Auto Frames tabs */}
+      {tab !== 'summary' && (
+        <div className="annotation-search-bar">
+          <Search size={13} className="annotation-search-icon" />
+          <input
+            className="annotation-search-input"
+            placeholder={tab === 'manual' ? 'Search notes…' : 'Search frames…'}
+            value={tab === 'manual' ? manualSearch : autoSearch}
+            onChange={(e) =>
+              tab === 'manual'
+                ? setManualSearch(e.target.value)
+                : setAutoSearch(e.target.value)
+            }
+          />
+          {(tab === 'manual' ? manualSearch : autoSearch) && (
+            <button
+              className="annotation-search-clear"
+              onClick={() => {
+                if (tab === 'manual') {
+                  setManualSearch('');
+                  setManualSearchResults(null);
+                } else {
+                  setAutoSearch('');
+                }
+              }}
+              title="Clear search"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Range-select status banner */}
+      {isRangeSelectMode && !pendingRange && (
+        <div className="range-select-banner">
+          <div className="range-select-banner-text">
+            <Info size={14} />
+            <span>Click once on the timeline to set <strong>start</strong>, click again for <strong>end</strong></span>
+          </div>
+          <button className="annotation-action-btn" onClick={onCancelRangeSelect} title="Cancel">
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Add note inline */}
       {addingNote && (
@@ -475,16 +697,71 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
         </div>
       )}
 
+      {/* Pending frame range form (after two timeline clicks) */}
+      {pendingRange && (
+        <div className="annotation-add-row annotation-add-row--frame">
+          <div className="annotation-frame-timestamps">
+            <button
+              className="annotation-timestamp"
+              onClick={() => onSeek(pendingRange.start)}
+              title={`Jump to ${formatDuration(pendingRange.start)}`}
+            >
+              <Clock size={12} />
+              {formatDuration(pendingRange.start)}
+            </button>
+            <span className="annotation-frame-dash">–</span>
+            <button
+              className="annotation-timestamp"
+              onClick={() => onSeek(pendingRange.end)}
+              title={`Jump to ${formatDuration(pendingRange.end)}`}
+            >
+              <Clock size={12} />
+              {formatDuration(pendingRange.end)}
+            </button>
+          </div>
+          <input
+            ref={frameInputRef}
+            className="annotation-edit-input"
+            placeholder="Describe this segment…"
+            value={frameContent}
+            onChange={(e) => setFrameContent(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSaveFrame();
+              if (e.key === 'Escape') handleCancelFrame();
+            }}
+          />
+          <button
+            className="annotation-action-btn"
+            onClick={handleSaveFrame}
+            title="Save frame"
+            disabled={!frameContent.trim()}
+          >
+            <Check size={14} />
+          </button>
+          <button
+            className="annotation-action-btn"
+            onClick={handleCancelFrame}
+            title="Cancel"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       {/* Annotation List */}
       <div className="annotation-list">
         {tab === 'manual' ? (
           manualLoading ? (
             <p className="annotation-empty">Loading notes…</p>
-          ) : manualAnnotations.length > 0 ? (
-            manualAnnotations.map(renderManualRow)
+          ) : manualSearchLoading ? (
+            <p className="annotation-empty">Searching…</p>
+          ) : displayedManualAnnotations.length > 0 ? (
+            displayedManualAnnotations.map(renderManualRow)
           ) : (
             <p className="annotation-empty">
-              No notes yet. Pause the video and click "Add Note" to annotate.
+              {manualSearch.trim()
+                ? 'No results found.'
+                : 'No notes yet. Pause the video and click "Add Note" to annotate.'}
             </p>
           )
         ) : tab === 'summary' ? (
@@ -565,7 +842,7 @@ export function AnnotationPanel({ videoId, currentTime, duration, onSeek, onMark
             {autoHasMore && !autoLoading && (
               <button
                 className="annotation-load-more"
-                onClick={() => loadAutoPage(autoPage + 1)}
+                onClick={() => loadAutoPage(autoPage + 1, autoSearch.trim() || undefined)}
               >
                 <ChevronDown size={14} />
                 Load more ({autoItems.length} of {autoTotal})

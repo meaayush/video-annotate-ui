@@ -234,15 +234,16 @@ function mapAutoAnnotation(raw: AutoAnnotationRaw): AutoAnnotationItem {
   };
 }
 
-/** GET /video/:id/auto-annotations?page=&page_size= */
+/** GET /video/:id/auto-annotations?page=&page_size=&search= */
 export async function fetchAutoAnnotations(
   videoId: string,
   page = 1,
   pageSize = 50,
+  search?: string,
 ): Promise<AutoAnnotationsPaginated> {
-  const data = await apiClient<AutoAnnotationsResponse>(
-    `/video/${videoId}/auto-annotations?page=${page}&page_size=${pageSize}`,
-  );
+  let url = `/video/${videoId}/auto-annotations?page=${page}&page_size=${pageSize}`;
+  if (search) url += `&search=${encodeURIComponent(search)}`;
+  const data = await apiClient<AutoAnnotationsResponse>(url);
   return {
     items: data.annotations.map(mapAutoAnnotation),
     page: data.pagination.page,
@@ -308,10 +309,11 @@ export async function createAutoAnnotation(
 
 interface AnnotationRaw {
   id: string;
-  type: string;
+  type: 'timestamp' | 'frame';
   source: string;
-  frame_number: number | null;
-  timestamp: number;
+  timestamp: number | null;
+  timestamp_start: number | null;
+  timestamp_end: number | null;
   content: string;
   created_at: string;
 }
@@ -364,32 +366,59 @@ export async function fetchVideoSummary(videoId: string): Promise<VideoSummary> 
 
 // ── Manual Annotations ──
 
-export interface ManualAnnotationItem {
+export interface TimestampAnnotationItem {
   id: string;
+  type: 'timestamp';
   timestamp: number;
   content: string;
   createdAt: string;
 }
 
+export interface FrameAnnotationItem {
+  id: string;
+  type: 'frame';
+  timestampStart: number;
+  timestampEnd: number;
+  content: string;
+  createdAt: string;
+}
+
+export type ManualAnnotationItem = TimestampAnnotationItem | FrameAnnotationItem;
+
 /** GET /video/:id/annotations */
 export async function fetchManualAnnotations(
   videoId: string,
+  search?: string,
 ): Promise<ManualAnnotationItem[]> {
-  const data = await apiClient<{ annotations: AnnotationRaw[] }>(`/video/${videoId}/annotations`);
-  return data.annotations.map((raw) => ({
-    id: raw.id,
-    timestamp: raw.timestamp,
-    content: raw.content,
-    createdAt: raw.created_at,
-  }));
+  const qs = search ? `?search=${encodeURIComponent(search)}` : '';
+  const data = await apiClient<{ annotations: AnnotationRaw[] }>(`/video/${videoId}/annotations${qs}`);
+  return data.annotations.map((raw): ManualAnnotationItem => {
+    if (raw.type === 'frame') {
+      return {
+        id: raw.id,
+        type: 'frame',
+        timestampStart: raw.timestamp_start ?? 0,
+        timestampEnd: raw.timestamp_end ?? 0,
+        content: raw.content,
+        createdAt: raw.created_at,
+      };
+    }
+    return {
+      id: raw.id,
+      type: 'timestamp',
+      timestamp: raw.timestamp ?? 0,
+      content: raw.content,
+      createdAt: raw.created_at,
+    };
+  });
 }
 
-/** POST /video/:id/annotations — create a manual annotation */
+/** POST /video/:id/annotations — create a point (timestamp) annotation */
 export async function createManualAnnotation(
   videoId: string,
   timestamp: number,
   content: string,
-): Promise<ManualAnnotationItem> {
+): Promise<TimestampAnnotationItem> {
   const raw = await apiClient<AnnotationRaw>(
     `/video/${videoId}/annotations`,
     {
@@ -399,7 +428,32 @@ export async function createManualAnnotation(
   );
   return {
     id: raw.id,
-    timestamp: raw.timestamp,
+    type: 'timestamp',
+    timestamp: raw.timestamp ?? timestamp,
+    content: raw.content,
+    createdAt: raw.created_at,
+  };
+}
+
+/** POST /video/:id/annotations — create a frame (range) annotation */
+export async function createFrameAnnotation(
+  videoId: string,
+  timestampStart: number,
+  timestampEnd: number,
+  content: string,
+): Promise<FrameAnnotationItem> {
+  const raw = await apiClient<AnnotationRaw>(
+    `/video/${videoId}/annotations`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ type: 'frame', timestamp_start: timestampStart, timestamp_end: timestampEnd, content }),
+    },
+  );
+  return {
+    id: raw.id,
+    type: 'frame',
+    timestampStart: raw.timestamp_start ?? timestampStart,
+    timestampEnd: raw.timestamp_end ?? timestampEnd,
     content: raw.content,
     createdAt: raw.created_at,
   };
